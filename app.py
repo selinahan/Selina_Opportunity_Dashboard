@@ -1,7 +1,12 @@
 from datetime import date
+import re
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
+
+
+SALARY_FLOOR = 200_000
 
 
 st.set_page_config(
@@ -12,154 +17,269 @@ st.set_page_config(
 
 
 BACKGROUND_SIGNALS = [
+    "Former Cboe economist, data scientist, and quantitative researcher",
     "Economist background",
     "Market structure expertise",
+    "Brokerage, exchange, and trading ecosystem expertise",
     "Public speaking and executive communication",
     "Research publications",
     "Quantitative research education",
     "Mandarin language advantage when relevant",
 ]
 
+TARGET_COMPANIES = {
+    "Brokerage / retail investing": [
+        "Fidelity",
+        "Charles Schwab",
+        "Interactive Brokers",
+        "Robinhood",
+        "Clear Street",
+    ],
+    "Exchanges / market infrastructure": [
+        "Cboe",
+        "CME Group",
+        "Nasdaq",
+        "NYSE / ICE",
+        "IEX",
+    ],
+    "Prediction markets / event contracts": [
+        "Kalshi",
+        "Polymarket",
+        "DraftKings",
+        "Crypto.com / event markets",
+    ],
+    "Research, asset management, trust, and banking": [
+        "Morningstar",
+        "Northern Trust",
+        "Wells Fargo",
+        "BlackRock",
+        "State Street",
+        "Fitch",
+        "William Blair",
+        "Northwestern Mutual",
+    ],
+    "Consulting and advisory": [
+        "KPMG",
+        "Deloitte",
+        "EY",
+        "PwC",
+        "McKinsey",
+        "BCG",
+    ],
+    "Digital assets / FinTech": [
+        "Coinbase",
+        "Anchorage Digital",
+        "Affirm",
+        "SoFi",
+        "Stripe",
+        "Block",
+    ],
+}
+
+SEARCH_QUERIES = [
+    "market structure director Chicago remote",
+    "brokerage strategy market structure options",
+    "quantitative researcher market microstructure",
+    "research director financial markets Chicago",
+    "product strategy brokerage trading",
+    "event contracts prediction markets strategy",
+    "financial services data science director Chicago",
+]
+
+SOURCE_LINKS = {
+    "LinkedIn Saved Jobs": "https://www.linkedin.com/jobs/saved/",
+    "LinkedIn Job Alerts": "https://www.linkedin.com/jobs/alerts/",
+    "Indeed": "https://www.indeed.com/jobs?q=market+structure+director+finance&l=Chicago%2C+IL",
+    "Google Jobs Search": "https://www.google.com/search?q=market+structure+director+finance+Chicago+remote+jobs",
+}
+
+CAREER_PAGES = {
+    "Morningstar": "https://www.morningstar.com/company/careers",
+    "CME Group": "https://www.cmegroup.com/careers.html",
+    "Nasdaq": "https://www.nasdaq.com/about/careers",
+    "Fitch": "https://www.fitch.group/careers",
+    "Akuna Capital": "https://akunacapital.com/careers",
+    "Clear Street": "https://clearstreet.io/careers/",
+    "William Blair": "https://www.williamblair.com/Careers",
+    "Northwestern Mutual": "https://www.northwesternmutual.com/careers/",
+    "Cboe": "https://www.cboe.com/about/careers/",
+    "ICE": "https://www.ice.com/careers",
+    "Robinhood": "https://careers.robinhood.com/",
+    "Coinbase": "https://www.coinbase.com/careers",
+    "Anchorage Digital": "https://www.anchorage.com/careers",
+    "Affirm": "https://www.affirm.com/careers",
+}
+
+
+def extract_salary_numbers(text):
+    clean_text = text.lower().replace(",", "")
+    numbers = []
+    for match in re.finditer(r"\$?\s*(\d{2,3})(?:\s*k|\s*000)?", clean_text):
+        value = int(match.group(1))
+        if value < 50:
+            continue
+        if value < 1000:
+            value *= 1000
+        numbers.append(value)
+    return numbers
+
+
+def evaluate_salary_fit(salary_text):
+    salary_numbers = extract_salary_numbers(salary_text)
+    if not salary_numbers:
+        return 0, None
+
+    max_salary = max(salary_numbers)
+    min_salary = min(salary_numbers)
+    if max_salary < SALARY_FLOOR:
+        return -14, f"Posted compensation appears below Selina's $200K+ market target; visible range tops out near ${max_salary:,}."
+    if min_salary >= SALARY_FLOOR:
+        return 8, "Posted compensation appears to meet Selina's $200K+ market target."
+    return 3, "Compensation range may reach Selina's $200K+ target, but the lower end is below target."
+
 
 JOBS = [
     {
         "id": 1,
-        "title": "Director, Commercial Finance",
-        "company": "Circana",
-        "location": "Remote or Hybrid, Chicago",
-        "salary": "$150K-$175K + bonus",
-        "tier": "Tier 1: Financial Analytics / Product Strategy / Market Intelligence adjacent",
-        "fit_score": 91,
-        "link": "https://www.builtinchicago.org/job/director-commercial-finance/9202510",
+        "title": "Senior Manager / Director, Market Structure Strategy",
+        "company": "Charles Schwab / Fidelity / Interactive Brokers target",
+        "location": "Chicago, remote, or major U.S. finance hub",
+        "salary": "$200K+ target",
+        "tier": "Tier 1: Market Structure / Brokerage Strategy / Product Strategy",
+        "fit_score": 94,
+        "link": "https://www.schwabjobs.com/",
         "strengths": [
-            "Strong match for economics, analytics, and business narrative.",
-            "Role values senior stakeholder influence and executive communication.",
-            "Chicago/remote-friendly with compensation above the $150K floor.",
+            "Directly aligned with Selina's Cboe market structure, economist, data science, and quantitative research background.",
+            "Brokerage firms value expertise in trading behavior, options markets, market quality, routing, and investor analytics.",
+            "Strong fit for public speaking, research publications, and executive-facing market narratives.",
         ],
         "gaps": [
-            "More FP&A/commercial finance than pure investment strategy.",
-            "Resume should show forecasting, budgeting, KPI, and planning-system exposure.",
+            "May require product ownership, brokerage operations, or direct client-segment strategy experience.",
+            "Application should translate Cboe market expertise into brokerage growth, product, and client insights.",
         ],
-        "why": "Best balance of Chicago/remote, seniority, finance, analytics, product support, and executive storytelling.",
+        "why": "This is the strongest lane: brokerage firms are close to Cboe's ecosystem and can pay well for market structure plus quantitative strategy.",
         "keywords": [
-            "commercial finance",
-            "financial planning",
-            "forecasting",
-            "KPI analysis",
-            "executive communication",
-            "business narrative",
-            "pricing strategy",
+            "market structure",
+            "brokerage strategy",
+            "options markets",
+            "order routing",
+            "investor analytics",
+            "product strategy",
+            "quantitative research",
         ],
     },
     {
         "id": 2,
-        "title": "Director of Capital Markets & Investor Relations",
-        "company": "Formic",
-        "location": "Remote, U.S.; Chicago company presence",
-        "salary": "$150K-$180K",
-        "tier": "Tier 1: Investment Strategist / Product Strategy / Financial Analytics",
-        "fit_score": 88,
-        "link": "https://www.builtinchicago.org/job/director-strategic-finance-investor-relations/8579168",
+        "title": "Director, Exchange Strategy / Market Intelligence",
+        "company": "IEX / Nasdaq / CME Group / ICE target",
+        "location": "Chicago, New York, or remote-flexible",
+        "salary": "$200K+ target",
+        "tier": "Tier 1: Exchange Strategy / Market Intelligence / Research Director",
+        "fit_score": 93,
+        "link": "https://www.iex.io/careers/",
         "strengths": [
-            "Strong capital markets, investor narrative, and strategy alignment.",
-            "Research/public speaking background maps well to board and investor materials.",
-            "Market and competitive analysis are central to the role.",
+            "Very close to Selina's prior Cboe exchange, market structure, and market intelligence background.",
+            "Strong match for research publications, public speaking, and competitive market analysis.",
+            "Useful for roles involving market quality, exchange strategy, listings, products, and regulatory context.",
         ],
         "gaps": [
-            "May expect direct investment banking, PE, VC, structured finance, or fundraising experience.",
-            "Application should translate market expertise into capital-formation language.",
+            "Some roles may prefer direct exchange product management or regulatory policy ownership.",
+            "Need to avoid looking too Cboe-specific by showing broader market infrastructure perspective.",
         ],
-        "why": "A strong strategy-and-finance role where complex market communication could stand out.",
+        "why": "This keeps Selina closest to her strongest credibility: exchanges, market structure, research, and senior market communication.",
         "keywords": [
-            "capital markets",
-            "investor relations",
-            "financial modeling",
-            "board materials",
-            "market analysis",
-            "capital strategy",
-            "KPI framework",
+            "exchange strategy",
+            "market quality",
+            "market intelligence",
+            "options",
+            "equities",
+            "market microstructure",
+            "regulatory analysis",
         ],
     },
     {
         "id": 3,
-        "title": "Director, Centralized Investment Management Platform",
-        "company": "Hightower",
-        "location": "Chicago",
-        "salary": "$150K-$170K",
-        "tier": "Tier 3: Wealth Strategy / Family Office / Investment Platform",
-        "fit_score": 86,
-        "link": "https://www.ziprecruiter.com/c/hightower/Job/Director%2C-Centralized-Investment-Management-Platform/-in-Chicago%2CIL?jid=3903d6cb43026f4e",
+        "title": "Research Director / Market Intelligence Lead",
+        "company": "Morningstar / Northern Trust / BlackRock target",
+        "location": "Chicago preferred, remote possible",
+        "salary": "$200K+ target",
+        "tier": "Tier 1: Research Director / Market Intelligence / Investment Strategy",
+        "fit_score": 90,
+        "link": "https://www.morningstar.com/company/careers",
         "strengths": [
-            "Close to wealth strategy and investment platform interests.",
-            "Market structure and economist lens can support investment-platform strategy.",
-            "Chicago location is ideal.",
+            "Strong fit for economist background, research publications, market commentary, and investment analytics.",
+            "Morningstar and Northern Trust are especially relevant because of Chicago presence and research-driven businesses.",
+            "BlackRock may value market structure expertise for investment strategy, ETF, or market insights roles.",
         ],
         "gaps": [
-            "May require direct wealth management platform or advisor-facing experience.",
-            "Application should emphasize investment research, client-facing communication, and platform strategy.",
+            "May require direct portfolio construction, manager research, or wealth/advisor experience.",
+            "Application should position Selina as a market/investment research leader rather than a pure academic economist.",
         ],
-        "why": "A practical Chicago-based path into wealth strategy and investment-platform leadership.",
+        "why": "These firms convert research and market expertise into client-facing investment strategy, which fits Selina's communication strengths.",
         "keywords": [
-            "investment management",
-            "wealth strategy",
-            "advisor platform",
-            "portfolio analytics",
-            "family office",
+            "market intelligence",
             "investment research",
+            "ETF strategy",
+            "wealth strategy",
+            "advisor insights",
+            "economic research",
+            "portfolio analytics",
         ],
     },
     {
         "id": 4,
-        "title": "Senior Quantitative Researcher, Futures",
-        "company": "Undisclosed / eFinancialCareers listing",
-        "location": "Remote",
-        "salary": "$150K-$300K",
-        "tier": "Tier 2: Quantitative Research",
-        "fit_score": 82,
-        "link": "https://www.efinancialcareers.com/jobs-USA-PA-Radnor-Senior_Quantitative_Researcher_Futures_-_Remote.id24168172",
+        "title": "Strategy / Research Lead, Event Contracts and Prediction Markets",
+        "company": "Kalshi / Polymarket / DraftKings target",
+        "location": "Remote, New York, or Chicago-flexible",
+        "salary": "$200K+ target",
+        "tier": "Tier 2: AI/Quant/FinTech Product plus Event Market Strategy",
+        "fit_score": 88,
+        "link": "https://kalshi.com/careers",
         "strengths": [
-            "Strong conceptual alignment with markets and quantitative research education.",
-            "Market structure expertise is relevant for futures and systematic strategy work.",
+            "Prediction and event markets connect directly to market design, contracts, trading behavior, and economic analysis.",
+            "Cboe experience is a strong credibility signal for regulated markets and product-market structure.",
+            "Quantitative research and public communication can support product strategy, market education, and policy narratives.",
         ],
         "gaps": [
-            "Likely expects direct systematic trading, futures, HFT, or production quant experience.",
-            "Resume should include technical methods, datasets, models, and measurable research outputs.",
+            "May require startup tolerance, crypto/web3 context, sports betting context, or direct event-contract product experience.",
+            "Some roles may be less stable than brokerage or asset management, so compensation and risk should be checked carefully.",
         ],
-        "why": "High-upside role, but best treated as a stretch unless the technical resume is strong.",
+        "why": "This is a high-upside lane where Selina's market design background can be unusually differentiated.",
         "keywords": [
-            "quantitative research",
-            "futures",
-            "systematic trading",
-            "statistical modeling",
-            "market microstructure",
-            "portfolio optimization",
+            "event contracts",
+            "prediction markets",
+            "market design",
+            "fintech product",
+            "trading behavior",
+            "regulatory strategy",
         ],
     },
     {
         "id": 5,
-        "title": "Finance Director, Treasury, Capital Markets & Corporate Finance",
-        "company": "Aon",
-        "location": "Chicago",
-        "salary": "$150K-$190K",
-        "tier": "Tier 1: Financial Analytics / Investment Strategy adjacent",
-        "fit_score": 80,
-        "link": "https://www.glassdoor.com/job-listing/finance-director-treasury-capital-markets-and-corporate-finance-aon-JV_IC1128808_KO0%2C63_KE64%2C67.htm?jl=1010095190457",
+        "title": "Capital Markets / Market Structure Advisory Director",
+        "company": "Deloitte / KPMG / EY / PwC target",
+        "location": "Chicago preferred, remote or travel-based",
+        "salary": "$200K+ target",
+        "tier": "Tier 1: Market Intelligence / Product Strategy / Financial Services Consulting",
+        "fit_score": 85,
+        "link": "https://www2.deloitte.com/us/en/careers/careers.html",
         "strengths": [
-            "Capital structure and scenario analysis align with economist and market expertise.",
-            "Chicago location and compensation fit the target.",
+            "Consulting can monetize Selina's market structure, research, data science, and executive presentation strengths.",
+            "Good path for financial services strategy, brokerage/exchange advisory, market intelligence, and analytics transformation.",
+            "Public speaking and research publications are useful for client-facing credibility.",
         ],
         "gaps": [
-            "Likely wants direct treasury and corporate-finance leadership.",
-            "Application should show CFO-facing work, financial modeling, and strategic recommendations.",
+            "May require consulting business development, client delivery, or heavy travel.",
+            "Application should show practical business impact, not only research quality.",
         ],
-        "why": "Relevant Chicago finance leadership role with a capital markets angle.",
+        "why": "This is a paycheck-first lane with many openings, but the best targets should stay close to financial markets and analytics.",
         "keywords": [
-            "treasury",
-            "capital markets",
-            "corporate finance",
-            "scenario analysis",
-            "capital structure",
-            "CFO support",
+            "financial services consulting",
+            "market structure",
+            "capital markets advisory",
+            "data science",
+            "analytics strategy",
+            "client presentations",
         ],
     },
 ]
@@ -180,6 +300,13 @@ def evaluate_custom_job(title, company, location, salary, job_description):
         "financial analytics",
         "commercial finance",
         "capital markets",
+        "market structure",
+        "exchange",
+        "brokerage",
+        "broker-dealer",
+        "options",
+        "order routing",
+        "market quality",
     ]
     tier_2_terms = [
         "ai",
@@ -188,6 +315,9 @@ def evaluate_custom_job(title, company, location, salary, job_description):
         "quant",
         "fintech",
         "machine learning",
+        "prediction market",
+        "event contract",
+        "market design",
     ]
     tier_3_terms = [
         "wealth",
@@ -196,6 +326,44 @@ def evaluate_custom_job(title, company, location, salary, job_description):
         "chinese",
         "private wealth",
     ]
+    priority_companies = [
+        "fidelity",
+        "charles schwab",
+        "schwab",
+        "interactive brokers",
+        "cboe",
+        "cme",
+        "nasdaq",
+        "nyse",
+        "ice",
+        "iex",
+        "kalshi",
+        "polymarket",
+        "draftkings",
+        "morningstar",
+        "northern trust",
+        "wells fargo",
+        "blackrock",
+        "fitch",
+        "akuna",
+        "akuna capital",
+        "clear street",
+        "william blair",
+        "northwestern",
+        "northwestern mutual",
+        "coinbase",
+        "anchorage",
+        "anchorage digital",
+        "affirm",
+        "kpmg",
+        "deloitte",
+        "ey",
+        "pwc",
+    ]
+
+    if any(company_name in text for company_name in priority_companies):
+        score += 10
+        strengths.append("Company is on Selina's priority target list.")
 
     if any(term in text for term in tier_1_terms):
         score += 17
@@ -222,11 +390,14 @@ def evaluate_custom_job(title, company, location, salary, job_description):
     elif location:
         gaps.append("Location may require relocation unless the role is exceptionally relevant.")
 
-    if any(term in text for term in ["150", "$150", "160", "170", "180", "190", "200", "250", "300"]):
-        score += 6
-        strengths.append("Compensation appears likely to meet or exceed the $150K target.")
+    salary_adjustment, salary_note = evaluate_salary_fit(salary)
+    score += salary_adjustment
+    if salary_note and salary_adjustment > 0:
+        strengths.append(salary_note)
+    elif salary_note:
+        gaps.append(salary_note)
     elif salary:
-        gaps.append("Compensation should be checked against the $150K floor.")
+        gaps.append("Compensation should be checked against the $200K+ market target.")
     else:
         gaps.append("Salary is not provided yet.")
 
@@ -277,7 +448,7 @@ def evaluate_custom_job(title, company, location, salary, job_description):
     score = max(40, min(score, 96))
     why = (
         "Manually added role. The score is based on the link/details you entered "
-        "and Selina's target tiers, location preference, salary floor, and background signals."
+        "and Selina's target tiers, location preference, $200K+ compensation target, and background signals."
     )
     return score, tier, strengths[:5], gaps[:4], why, keywords[:8]
 
@@ -308,16 +479,16 @@ def build_application_package(job):
     keywords = ", ".join(job["keywords"][:5])
 
     bullets = [
-        f"Translated complex market and economic research into executive-ready insights supporting strategy, risk assessment, and decision-making relevant to {title}.",
-        f"Applied quantitative research training and market structure expertise to identify key drivers, interpret data, and communicate implications to senior stakeholders.",
+        f"Translated Cboe market structure, economic research, and trading ecosystem analysis into executive-ready insights relevant to {title}.",
+        f"Applied data science and quantitative research experience to identify market drivers, evaluate trading behavior, and communicate implications to senior stakeholders.",
         f"Authored research publications and delivered public presentations that converted technical analysis into clear recommendations for sophisticated audiences.",
-        f"Built cross-functional narratives connecting market trends, financial indicators, and strategic priorities across finance, product, and research contexts.",
+        f"Built cross-functional narratives connecting exchange markets, brokerage behavior, financial products, and strategic priorities across finance, product, and research contexts.",
     ]
 
     cover_letter = f"""
 Dear Hiring Team,
 
-I am excited to apply for the {title} role at {company}. My background as an economist, combined with market structure expertise, quantitative research training, research publications, and senior-level communication experience, gives me a strong foundation for turning complex financial information into clear strategy.
+I am excited to apply for the {title} role at {company}. My background as a former Cboe economist, data scientist, and quantitative researcher, combined with market structure expertise, research publications, and senior-level communication experience, gives me a strong foundation for turning complex financial information into clear strategy.
 
 What interests me most about this role is the opportunity to connect rigorous analysis with practical business decisions. I have built my career around interpreting markets, explaining sophisticated ideas to varied audiences, and producing research that supports confident action.
 
@@ -330,7 +501,7 @@ Selina Han
 """.strip()
 
     linkedin_message = f"""
-Hi [Name], I saw the {title} opening at {company} and was drawn to the mix of {keywords}. My background is in economics, market structure, quantitative research, publications, and executive-facing communication. If you are open to it, I would appreciate any perspective on the role or the team. Thank you.
+Hi [Name], I saw the {title} opening at {company} and was drawn to the mix of {keywords}. My background includes work as a Cboe economist, data scientist, and quantitative researcher, with market structure expertise, publications, and executive-facing communication. If you are open to it, I would appreciate any perspective on the role or the team. Thank you.
 """.strip()
 
     return bullets, cover_letter, linkedin_message
@@ -339,10 +510,10 @@ Hi [Name], I saw the {title} opening at {company} and was drawn to the mix of {k
 def build_networking_messages(job):
     return {
         "Alumni": f"Hi [Name], I found your profile while researching {job['company']} and noticed our shared academic background. I am exploring the {job['title']} role and would value any perspective you might be willing to share about the company or team.",
-        "First-degree connection": f"Hi [Name], I am looking at the {job['title']} role at {job['company']}. Given my economics, market structure, and research background, it looks highly relevant. Would you be open to a quick perspective or referral if you think there may be a fit?",
-        "Second-degree warm intro": f"Hi [Name], I noticed you are connected to [Contact] at {job['company']}. I am interested in the {job['title']} role and think it aligns with my economics, market structure, and research background. Would you feel comfortable introducing us?",
-        "Recruiter": f"Hi [Name], I am interested in the {job['title']} role at {job['company']}. My background includes economics, market structure expertise, quantitative research education, research publications, and senior-level public communication. I would welcome the chance to discuss whether my profile fits the team’s needs.",
-        "Hiring manager": f"Hi [Name], I am very interested in the {job['title']} role. My background combines economics, market structure, quantitative research training, and public-facing research communication. I am especially interested in how this role connects analysis with strategic decision-making at {job['company']}. I would welcome the opportunity to connect briefly.",
+        "First-degree connection": f"Hi [Name], I am looking at the {job['title']} role at {job['company']}. Given my Cboe economist, data science, quantitative research, and market structure background, it looks highly relevant. Would you be open to a quick perspective or referral if you think there may be a fit?",
+        "Second-degree warm intro": f"Hi [Name], I noticed you are connected to [Contact] at {job['company']}. I am interested in the {job['title']} role and think it aligns with my Cboe market structure, economics, and quantitative research background. Would you feel comfortable introducing us?",
+        "Recruiter": f"Hi [Name], I am interested in the {job['title']} role at {job['company']}. My background includes Cboe experience as an economist, data scientist, and quantitative researcher, plus market structure expertise, research publications, and senior-level public communication. I would welcome the chance to discuss whether my profile fits the team’s needs.",
+        "Hiring manager": f"Hi [Name], I am very interested in the {job['title']} role. My background combines Cboe market structure experience, economics, data science, quantitative research, and public-facing research communication. I am especially interested in how this role connects analysis with strategic decision-making at {job['company']}. I would welcome the opportunity to connect briefly.",
     }
 
 
@@ -447,7 +618,18 @@ def render_job_intake(existing_jobs):
         with col_2:
             salary = st.text_input("Salary or range")
             link = st.text_input("Job link")
-            source = st.selectbox("Source", ["Email", "LinkedIn", "Company site", "Recruiter", "Other"])
+            source = st.selectbox(
+                "Source",
+                [
+                    "LinkedIn saved job",
+                    "LinkedIn alert email",
+                    "Indeed",
+                    "Email",
+                    "Company site",
+                    "Recruiter",
+                    "Other",
+                ],
+            )
 
         job_description = st.text_area(
             "Job description or notes",
@@ -471,6 +653,39 @@ def render_job_intake(existing_jobs):
         st.success(f"Added {new_job['company']} - {new_job['title']} with a fit score of {new_job['fit_score']}/100.")
 
 
+def render_phase_one_sources():
+    st.subheader("Phase 1 Job Sources")
+    st.write(
+        "Use these as the first daily inputs. Open a source, save or copy strong jobs, "
+        "then paste the job link into the intake box above."
+    )
+
+    source_cols = st.columns(4)
+    for index, (label, url) in enumerate(SOURCE_LINKS.items()):
+        source_cols[index % 4].link_button(label, url)
+
+    st.write("**Reusable search queries**")
+    query_cols = st.columns(2)
+    for index, query in enumerate(SEARCH_QUERIES):
+        linkedin_url = (
+            "https://www.linkedin.com/jobs/search/"
+            f"?keywords={quote_plus(query)}&location={quote_plus('Chicago, Illinois, United States')}"
+        )
+        indeed_url = (
+            "https://www.indeed.com/jobs"
+            f"?q={quote_plus(query)}&l={quote_plus('Chicago, IL')}"
+        )
+        with query_cols[index % 2]:
+            st.write(query)
+            col_a, col_b = st.columns(2)
+            col_a.link_button("LinkedIn", linkedin_url)
+            col_b.link_button("Indeed", indeed_url)
+
+    with st.expander("Company Career Pages"):
+        for company, url in CAREER_PAGES.items():
+            st.link_button(company, url)
+
+
 if "custom_jobs" not in st.session_state:
     st.session_state.custom_jobs = []
 
@@ -479,8 +694,8 @@ st.title("Selina Opportunity Dashboard")
 st.caption(f"Morning control center | {date.today().strftime('%B %d, %Y')}")
 
 st.write(
-    "Daily view for senior finance, market intelligence, investment strategy, "
-    "AI-in-finance, quantitative research, wealth strategy, and Mandarin-relevant roles."
+    "Daily view for brokerage, exchanges, market structure, prediction markets, "
+    "investment research, financial services consulting, and Mandarin-relevant roles."
 )
 
 all_jobs = JOBS + st.session_state.custom_jobs
@@ -493,15 +708,24 @@ render_job_intake(JOBS)
 
 st.divider()
 
+render_phase_one_sources()
+
+st.divider()
+
 with st.sidebar:
     st.header("Target Profile")
     st.write("**Location:** Chicago first, remote second")
-    st.write("**Salary floor:** $150K")
+    st.write("**Market salary target:** $200K+")
     st.write("**Experience:** Senior, 5+ to 10+ years when relevant")
-    st.write("**Industries:** Finance, FinTech, adjacent high-fit sectors")
+    st.write("**Industries:** Brokerage, exchanges, asset management, FinTech, consulting")
     st.write("**Background signals**")
     for signal in BACKGROUND_SIGNALS:
         st.write(f"- {signal}")
+
+    st.header("Target Companies")
+    for category, companies in TARGET_COMPANIES.items():
+        st.write(f"**{category}**")
+        st.write(", ".join(companies))
 
     st.header("Filters")
     min_score = st.slider("Minimum fit score", 0, 100, 75, 5)
