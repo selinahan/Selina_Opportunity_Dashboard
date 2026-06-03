@@ -165,6 +165,143 @@ JOBS = [
 ]
 
 
+def evaluate_custom_job(title, company, location, salary, job_description):
+    text = " ".join([title, company, location, salary, job_description]).lower()
+    score = 58
+    strengths = []
+    gaps = []
+    keywords = []
+
+    tier_1_terms = [
+        "investment strategist",
+        "research director",
+        "market intelligence",
+        "product strategy",
+        "financial analytics",
+        "commercial finance",
+        "capital markets",
+    ]
+    tier_2_terms = [
+        "ai",
+        "artificial intelligence",
+        "quantitative research",
+        "quant",
+        "fintech",
+        "machine learning",
+    ]
+    tier_3_terms = [
+        "wealth",
+        "family office",
+        "mandarin",
+        "chinese",
+        "private wealth",
+    ]
+
+    if any(term in text for term in tier_1_terms):
+        score += 17
+        tier = "Tier 1: Investment Strategy / Market Intelligence / Product Strategy / Financial Analytics"
+        strengths.append("Strong match to Selina's highest-priority strategy, research, or financial analytics targets.")
+    elif any(term in text for term in tier_2_terms):
+        score += 14
+        tier = "Tier 2: AI in Finance / Quantitative Research / FinTech Product"
+        strengths.append("Good match to AI-in-finance, quantitative research, or FinTech interests.")
+    elif any(term in text for term in tier_3_terms):
+        score += 12
+        tier = "Tier 3: Wealth Strategy / Family Office / Mandarin-relevant"
+        strengths.append("Relevant to wealth strategy, family office research, or Mandarin language advantage.")
+    else:
+        tier = "Unclassified: Needs review"
+        gaps.append("Role does not clearly match the three target tiers from the information entered.")
+
+    if "chicago" in text:
+        score += 8
+        strengths.append("Chicago location is strongly aligned with Selina's preference.")
+    elif "remote" in text:
+        score += 6
+        strengths.append("Remote option fits Selina's location preference.")
+    elif location:
+        gaps.append("Location may require relocation unless the role is exceptionally relevant.")
+
+    if any(term in text for term in ["150", "$150", "160", "170", "180", "190", "200", "250", "300"]):
+        score += 6
+        strengths.append("Compensation appears likely to meet or exceed the $150K target.")
+    elif salary:
+        gaps.append("Compensation should be checked against the $150K floor.")
+    else:
+        gaps.append("Salary is not provided yet.")
+
+    skill_terms = {
+        "economics": "Economist background",
+        "economist": "Economist background",
+        "market structure": "Market structure expertise",
+        "market intelligence": "Market intelligence and research expertise",
+        "research": "Research publications and analytical writing",
+        "publication": "Research publications",
+        "presentation": "Public speaking and executive communication",
+        "stakeholder": "Executive communication",
+        "quantitative": "Quantitative research education",
+        "modeling": "Quantitative and financial modeling",
+        "mandarin": "Mandarin language advantage",
+        "chinese": "Mandarin language advantage",
+        "strategy": "Strategy background",
+        "analytics": "Financial analytics",
+    }
+    for term, signal in skill_terms.items():
+        if term in text and signal not in strengths:
+            strengths.append(signal)
+            keywords.append(term)
+
+    if any(term in text for term in ["rating", "ratings", "credit rating"]):
+        gaps.append("May require direct ratings experience, which should be positioned carefully.")
+    if any(term in text for term in ["treasury", "fp&a", "fundraising", "portfolio manager"]):
+        gaps.append("May require direct operating experience in a specific finance niche.")
+    if len(job_description.strip()) < 80:
+        gaps.append("Fit score is preliminary because only limited job detail was entered.")
+
+    default_keywords = [
+        "market structure",
+        "economic research",
+        "financial analytics",
+        "strategy",
+        "executive communication",
+    ]
+    for keyword in default_keywords:
+        if keyword not in keywords:
+            keywords.append(keyword)
+
+    if not strengths:
+        strengths.append("Potential fit needs more job description detail.")
+    if not gaps:
+        gaps.append("No major gaps identified from the information entered.")
+
+    score = max(40, min(score, 96))
+    why = (
+        "Manually added role. The score is based on the link/details you entered "
+        "and Selina's target tiers, location preference, salary floor, and background signals."
+    )
+    return score, tier, strengths[:5], gaps[:4], why, keywords[:8]
+
+
+def build_custom_job(next_id, title, company, location, salary, link, job_description):
+    score, tier, strengths, gaps, why, keywords = evaluate_custom_job(
+        title, company, location, salary, job_description
+    )
+    return {
+        "id": next_id,
+        "title": title or "Untitled Role",
+        "company": company or "Company TBD",
+        "location": location or "Location TBD",
+        "salary": salary or "Salary not posted",
+        "tier": tier,
+        "fit_score": score,
+        "link": link or "https://www.linkedin.com/jobs/",
+        "strengths": strengths,
+        "gaps": gaps,
+        "why": why,
+        "keywords": keywords,
+    }
+
+
 def build_application_package(job):
     title = job["title"]
     company = job["company"]
@@ -209,10 +346,12 @@ def build_networking_messages(job):
     }
 
 
-def render_metric_row():
-    new_jobs = len(JOBS)
-    high_match = sum(job["fit_score"] >= 85 for job in JOBS)
-    chicago_remote = sum("Chicago" in job["location"] or "Remote" in job["location"] for job in JOBS)
+def render_metric_row(jobs):
+    new_jobs = len(jobs)
+    high_match = sum(job["fit_score"] >= 85 for job in jobs)
+    chicago_remote = sum(
+        "Chicago" in job["location"] or "Remote" in job["location"] for job in jobs
+    )
 
     cols = st.columns(7)
     cols[0].metric("New Jobs", new_jobs)
@@ -292,6 +431,50 @@ def render_job_card(job):
                 )
 
 
+def render_job_intake(existing_jobs):
+    st.subheader("Add a Job You Found")
+    st.write(
+        "Paste a job link and add whatever details you have. The dashboard will "
+        "score it and add the same application and networking tools."
+    )
+
+    with st.form("manual_job_form", clear_on_submit=True):
+        col_1, col_2 = st.columns(2)
+        with col_1:
+            title = st.text_input("Job title")
+            company = st.text_input("Company")
+            location = st.text_input("Location or remote status")
+        with col_2:
+            salary = st.text_input("Salary or range")
+            link = st.text_input("Job link")
+            source = st.selectbox("Source", ["Email", "LinkedIn", "Company site", "Recruiter", "Other"])
+
+        job_description = st.text_area(
+            "Job description or notes",
+            height=160,
+            placeholder="Paste the job description, recruiter note, or your quick thoughts here.",
+        )
+        submitted = st.form_submit_button("Add and Score Job")
+
+    if submitted:
+        next_id = max(job["id"] for job in existing_jobs + st.session_state.custom_jobs) + 1
+        new_job = build_custom_job(
+            next_id=next_id,
+            title=title,
+            company=company,
+            location=location,
+            salary=salary,
+            link=link,
+            job_description=f"{source}. {job_description}",
+        )
+        st.session_state.custom_jobs.append(new_job)
+        st.success(f"Added {new_job['company']} - {new_job['title']} with a fit score of {new_job['fit_score']}/100.")
+
+
+if "custom_jobs" not in st.session_state:
+    st.session_state.custom_jobs = []
+
+
 st.title("Selina Opportunity Dashboard")
 st.caption(f"Morning control center | {date.today().strftime('%B %d, %Y')}")
 
@@ -300,7 +483,13 @@ st.write(
     "AI-in-finance, quantitative research, wealth strategy, and Mandarin-relevant roles."
 )
 
-render_metric_row()
+all_jobs = JOBS + st.session_state.custom_jobs
+
+render_metric_row(all_jobs)
+
+st.divider()
+
+render_job_intake(JOBS)
 
 st.divider()
 
@@ -325,7 +514,7 @@ with st.sidebar:
 
 filtered_jobs = [
     job
-    for job in JOBS
+    for job in all_jobs
     if job["fit_score"] >= min_score
     and any(job["tier"].startswith(tier) for tier in selected_tiers)
 ]
