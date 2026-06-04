@@ -1,12 +1,25 @@
 from datetime import date
+from io import BytesIO
+from pathlib import Path
 import re
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote, urlparse
 
 import pandas as pd
+import gspread
+import requests
 import streamlit as st
+from bs4 import BeautifulSoup
+from google.oauth2.service_account import Credentials
+from pypdf import PdfReader
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 
 SALARY_FLOOR = 200_000
+ICLOUD_STORAGE_DIR = Path(
+    "/Users/Selina/Library/Mobile Documents/com~apple~CloudDocs/Selina Opportunity Dashboard"
+)
 
 
 st.set_page_config(
@@ -110,6 +123,176 @@ CAREER_PAGES = {
     "Affirm": "https://www.affirm.com/careers",
 }
 
+APPLICATION_COLUMNS = [
+    "saved_at",
+    "company",
+    "role",
+    "status",
+    "applied_date",
+    "follow_up_date",
+    "fit_score",
+    "link",
+    "notes",
+]
+
+OUTREACH_COLUMNS = [
+    "saved_at",
+    "contact_name",
+    "company",
+    "contact_role",
+    "relationship",
+    "status",
+    "message_date",
+    "follow_up_date",
+    "related_job",
+    "notes",
+]
+
+JOB_COLUMNS = [
+    "id",
+    "title",
+    "company",
+    "location",
+    "salary",
+    "tier",
+    "fit_score",
+    "link",
+    "source_notes",
+    "strengths",
+    "gaps",
+    "why",
+    "keywords",
+]
+
+
+def ensure_icloud_storage():
+    ICLOUD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return ICLOUD_STORAGE_DIR
+
+
+def csv_path(filename):
+    return ensure_icloud_storage() / filename
+
+
+def load_csv_records(filename, columns):
+    path = csv_path(filename)
+    if not path.exists():
+        return []
+    try:
+        return pd.read_csv(path).fillna("").to_dict("records")
+    except Exception:
+        return []
+
+
+def append_csv_row(filename, columns, row):
+    path = csv_path(filename)
+    safe_row = {column: str(row.get(column, "")) for column in columns}
+    frame = pd.DataFrame([safe_row], columns=columns)
+    frame.to_csv(path, mode="a", index=False, header=not path.exists())
+    return path
+
+
+def split_cell(value):
+    if not value:
+        return []
+    return [item.strip() for item in str(value).split(" | ") if item.strip()]
+
+
+def serialize_job(job):
+    return {
+        "id": job["id"],
+        "title": job["title"],
+        "company": job["company"],
+        "location": job["location"],
+        "salary": job["salary"],
+        "tier": job["tier"],
+        "fit_score": job["fit_score"],
+        "link": job["link"],
+        "source_notes": job.get("source_notes", ""),
+        "strengths": " | ".join(job.get("strengths", [])),
+        "gaps": " | ".join(job.get("gaps", [])),
+        "why": job.get("why", ""),
+        "keywords": " | ".join(job.get("keywords", [])),
+    }
+
+
+def deserialize_job(row):
+    return {
+        "id": int(row.get("id", 0) or 0),
+        "title": row.get("title", "Untitled Role"),
+        "company": row.get("company", "Company TBD"),
+        "location": row.get("location", "Location TBD"),
+        "salary": row.get("salary", "Salary not posted"),
+        "tier": row.get("tier", "Unclassified: Needs review"),
+        "fit_score": int(float(row.get("fit_score", 0) or 0)),
+        "link": row.get("link", "https://www.linkedin.com/jobs/"),
+        "source_notes": row.get("source_notes", ""),
+        "strengths": split_cell(row.get("strengths", "")),
+        "gaps": split_cell(row.get("gaps", "")),
+        "why": row.get("why", ""),
+        "keywords": split_cell(row.get("keywords", "")),
+    }
+
+
+def google_sheets_configured():
+    try:
+        return "gcp_service_account" in st.secrets and "google_sheet_id" in st.secrets
+    except Exception:
+        return False
+
+
+@st.cache_resource
+def get_google_sheet():
+    if not google_sheets_configured():
+        return None
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    credentials = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=scopes,
+    )
+    client = gspread.authorize(credentials)
+    return client.open_by_key(st.secrets["google_sheet_id"])
+
+
+def get_or_create_worksheet(sheet, title, columns):
+    try:
+        worksheet = sheet.worksheet(title)
+    except gspread.WorksheetNotFound:
+        worksheet = sheet.add_worksheet(title=title, rows=500, cols=len(columns))
+        worksheet.append_row(columns)
+        return worksheet
+
+    existing_values = worksheet.get_all_values()
+    if not existing_values:
+        worksheet.append_row(columns)
+    return worksheet
+
+
+def append_sheet_row(tab_name, columns, row):
+    sheet = get_google_sheet()
+    if sheet is None:
+        return False, "Google Sheets is not configured yet."
+    try:
+        worksheet = get_or_create_worksheet(sheet, tab_name, columns)
+        worksheet.append_row([str(row.get(column, "")) for column in columns])
+        return True, f"Saved to Google Sheet tab: {tab_name}."
+    except Exception as exc:
+        return False, f"Could not save to Google Sheets: {exc}"
+
+
+def load_sheet_records(tab_name, columns):
+    sheet = get_google_sheet()
+    if sheet is None:
+        return []
+    try:
+        worksheet = get_or_create_worksheet(sheet, tab_name, columns)
+        return worksheet.get_all_records()
+    except Exception:
+        return []
+
 
 def extract_salary_numbers(text):
     clean_text = text.lower().replace(",", "")
@@ -136,6 +319,164 @@ def evaluate_salary_fit(salary_text):
     if min_salary >= SALARY_FLOOR:
         return 8, "Posted compensation appears to meet Selina's $200K+ market target."
     return 3, "Compensation range may reach Selina's $200K+ target, but the lower end is below target."
+
+
+def title_from_url(link):
+    if not link:
+        return ""
+    path_parts = [part for part in urlparse(link).path.split("/") if part]
+    if not path_parts:
+        return ""
+    slug = unquote(path_parts[-1]).split("?")[0]
+    slug = re.sub(r"[-_]+", " ", slug)
+    slug = re.sub(r"\s+", " ", slug).strip()
+    if not slug or slug.lower() in {"job", "jobs", "careers"}:
+        return ""
+    return slug.title()
+
+
+def infer_company_from_link(link):
+    hostname = urlparse(link).netloc.lower()
+    domain_map = {
+        "morningstar": "Morningstar",
+        "cmegroup": "CME Group",
+        "nasdaq": "Nasdaq",
+        "fitch": "Fitch",
+        "akunacapital": "Akuna Capital",
+        "clearstreet": "Clear Street",
+        "williamblair": "William Blair",
+        "northwesternmutual": "Northwestern Mutual",
+        "cboe": "Cboe",
+        "ice": "ICE",
+        "robinhood": "Robinhood",
+        "coinbase": "Coinbase",
+        "anchorage": "Anchorage Digital",
+        "affirm": "Affirm",
+        "schwab": "Charles Schwab",
+        "fidelity": "Fidelity",
+        "interactivebrokers": "Interactive Brokers",
+    }
+    for domain_hint, company_name in domain_map.items():
+        if domain_hint in hostname:
+            return company_name
+    return ""
+
+
+def clean_page_text(text):
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"(Apply now|Share|Save job|Back to search)", " ", text, flags=re.I)
+    return text.strip()
+
+
+def fetch_job_page(link):
+    if not link:
+        return "", "No link entered."
+    try:
+        response = requests.get(
+            link,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0 Safari/537.36"
+                )
+            },
+            timeout=12,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return "", f"Could not fetch the page automatically: {exc}"
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg", "header", "footer", "nav"]):
+        tag.decompose()
+
+    title_parts = []
+    if soup.title and soup.title.string:
+        title_parts.append(soup.title.string)
+    for selector in [
+        "h1",
+        '[class*="job-title"]',
+        '[class*="JobTitle"]',
+        '[data-testid*="job"]',
+    ]:
+        found = soup.select_one(selector)
+        if found:
+            title_parts.append(found.get_text(" ", strip=True))
+
+    page_text = clean_page_text(" ".join(title_parts + [soup.get_text(" ", strip=True)]))
+    if len(page_text) < 200:
+        return page_text, "Fetched the page, but it had very little readable text. The site may load content with JavaScript."
+    return page_text[:12000], "Fetched job page successfully."
+
+
+def extract_salary_text(page_text):
+    salary_patterns = [
+        r"\$\s?\d{2,3}(?:,\d{3})?\s?(?:k|K)?\s?[-–]\s?\$?\s?\d{2,3}(?:,\d{3})?\s?(?:k|K)?",
+        r"\$\s?\d{2,3}(?:,\d{3})?\s?(?:k|K)?\+?",
+        r"\d{2,3}\s?(?:k|K)\s?[-–]\s?\d{2,3}\s?(?:k|K)",
+    ]
+    for pattern in salary_patterns:
+        match = re.search(pattern, page_text)
+        if match:
+            return match.group(0)
+    return ""
+
+
+def extract_location_text(page_text):
+    location_terms = [
+        "Chicago",
+        "Remote",
+        "New York",
+        "Boston",
+        "Dallas",
+        "San Francisco",
+        "Hybrid",
+        "United States",
+    ]
+    found = [term for term in location_terms if re.search(rf"\b{re.escape(term)}\b", page_text, re.I)]
+    return ", ".join(found[:3])
+
+
+def extract_requirements_text(page_text):
+    requirement_markers = [
+        "requirements",
+        "qualifications",
+        "what you need",
+        "what we're looking for",
+        "responsibilities",
+        "you will",
+    ]
+    lower_text = page_text.lower()
+    starts = [lower_text.find(marker) for marker in requirement_markers if lower_text.find(marker) != -1]
+    if not starts:
+        return page_text[:1800]
+    start = min(starts)
+    return page_text[start : start + 2500]
+
+
+def extract_job_details_from_page(link, page_text):
+    inferred_title = title_from_url(link)
+    inferred_company = infer_company_from_link(link)
+    salary = extract_salary_text(page_text)
+    location = extract_location_text(page_text)
+    requirements = extract_requirements_text(page_text)
+
+    h1_like_title = ""
+    title_match = re.search(
+        r"((?:Head|Director|Senior|Lead|Principal|Manager|VP|Vice President|Research)[A-Za-z0-9 ,/&+-]{10,90})",
+        page_text,
+    )
+    if title_match:
+        h1_like_title = title_match.group(1).strip()
+
+    return {
+        "title": h1_like_title or inferred_title,
+        "company": inferred_company,
+        "location": location,
+        "salary": salary,
+        "requirements": requirements,
+    }
 
 
 JOBS = [
@@ -454,18 +795,31 @@ def evaluate_custom_job(title, company, location, salary, job_description):
 
 
 def build_custom_job(next_id, title, company, location, salary, link, job_description):
+    inferred_title = title_from_url(link)
+    inferred_company = infer_company_from_link(link)
+    resolved_title = title or inferred_title or "Untitled Role"
+    resolved_company = company or inferred_company or "Company TBD"
+    enriched_description = " ".join(
+        [
+            job_description,
+            resolved_title,
+            resolved_company,
+            link,
+        ]
+    )
     score, tier, strengths, gaps, why, keywords = evaluate_custom_job(
-        title, company, location, salary, job_description
+        resolved_title, resolved_company, location, salary, enriched_description
     )
     return {
         "id": next_id,
-        "title": title or "Untitled Role",
-        "company": company or "Company TBD",
+        "title": resolved_title,
+        "company": resolved_company,
         "location": location or "Location TBD",
         "salary": salary or "Salary not posted",
         "tier": tier,
         "fit_score": score,
         "link": link or "https://www.linkedin.com/jobs/",
+        "source_notes": job_description,
         "strengths": strengths,
         "gaps": gaps,
         "why": why,
@@ -507,6 +861,137 @@ Hi [Name], I saw the {title} opening at {company} and was drawn to the mix of {k
     return bullets, cover_letter, linkedin_message
 
 
+def build_tailored_resume(job):
+    title = job["title"]
+    company = job["company"]
+    keywords = ", ".join(job["keywords"])
+    is_morningstar_research = (
+        "morningstar" in company.lower()
+        or "equity research" in title.lower()
+        or "multi asset" in title.lower()
+        or "investment research" in job["tier"].lower()
+    )
+
+    headline = (
+        "Investment Research and Market Structure Leader"
+        if is_morningstar_research
+        else "Market Structure, Quantitative Research, and Financial Strategy Leader"
+    )
+
+    summary_focus = (
+        "multi-asset research, equity research leadership, investment strategy, manager and market analysis, "
+        "and client-facing research communication"
+        if is_morningstar_research
+        else "market structure, quantitative research, financial analytics, product strategy, and executive communication"
+    )
+
+    selected_experience = [
+        "Led market structure and economic research initiatives translating complex trading, liquidity, volatility, and investor behavior questions into practical strategic insights.",
+        "Applied data science and quantitative research methods to analyze financial market dynamics, identify drivers, and communicate implications to senior stakeholders.",
+        "Produced research publications, market commentary, and executive-facing presentations for sophisticated financial audiences.",
+        "Connected exchange-market expertise with broader investment, brokerage, and product strategy questions across financial services.",
+    ]
+
+    if is_morningstar_research:
+        selected_experience = [
+            "Positioned market structure and economic research for investment audiences by translating complex market dynamics into clear implications for asset allocation, research strategy, and client-facing insight.",
+            "Applied quantitative research and data science methods to evaluate market behavior, liquidity, volatility, and structural trends across financial markets.",
+            "Authored research publications and delivered public presentations that converted technical analysis into accessible, decision-useful investment narratives.",
+            "Built cross-market perspectives connecting equities, options, macro signals, investor behavior, and product trends for senior stakeholders.",
+            "Brought exchange-side expertise from Cboe into broader investment research questions relevant to multi-asset research leadership.",
+        ]
+
+    resume = f"""
+SELINA HAN
+Chicago, IL | Open to remote | Mandarin
+
+{headline}
+
+SUMMARY
+Former Cboe economist, data scientist, and quantitative researcher with deep market structure expertise, research publications, public speaking experience, and a strong ability to translate complex financial-market analysis into senior-level strategy. Targeting {title} at {company}, with emphasis on {summary_focus}.
+
+CORE STRENGTHS
+- Market structure and trading ecosystem analysis
+- Economic research and quantitative analysis
+- Investment and financial-market research
+- Data science, modeling, and evidence-based decision support
+- Executive communication, public speaking, and research publication
+- Product, strategy, and market intelligence across financial services
+
+SELECTED EXPERIENCE
+- {selected_experience[0]}
+- {selected_experience[1]}
+- {selected_experience[2]}
+- {selected_experience[3]}
+{f"- {selected_experience[4]}" if len(selected_experience) > 4 else ""}
+
+ROLE-SPECIFIC POSITIONING FOR {company.upper()}
+- Emphasize fit with: {keywords}.
+- Position Cboe experience as a differentiated foundation for understanding market behavior, investor needs, financial products, and research-driven strategy.
+- Highlight senior communication: publications, presentations, stakeholder briefings, and ability to explain technical findings to investment and business audiences.
+- Address possible gaps by emphasizing fast ramp-up, rigorous research process, and ability to translate adjacent market expertise into the role's investment or business context.
+
+EDUCATION AND RESEARCH
+- Quantitative research background through education.
+- Research publication and public presentation experience.
+- Economist background with applied financial-market expertise.
+""".strip()
+    return resume
+
+
+def extract_resume_text(uploaded_file):
+    if uploaded_file is None:
+        return ""
+    try:
+        reader = PdfReader(uploaded_file)
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(pages).strip()
+    except Exception as exc:
+        return f"Could not read uploaded PDF automatically: {exc}"
+
+
+def build_tailored_resume_from_upload(job, resume_text):
+    generated_positioning = build_tailored_resume(job)
+    original_excerpt = resume_text[:3500] if resume_text else "No resume text extracted."
+    return f"""
+SELINA HAN
+Tailored Resume for {job['title']} at {job['company']}
+
+TARGET POSITIONING
+{generated_positioning}
+
+SOURCE RESUME EXCERPT TO PRESERVE AND EDIT
+{original_excerpt}
+
+EDITING NOTES
+- Keep verified titles, dates, employers, degrees, and publication names from the original resume.
+- Move the strongest Cboe market structure, quantitative research, economist, publication, and public-speaking evidence toward the top.
+- For this job, prioritize the keywords: {", ".join(job["keywords"])}.
+- Remove or reduce detail that does not support this role's research, investment, market structure, data science, or senior communication needs.
+""".strip()
+
+
+def create_resume_pdf(resume_text):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=LETTER,
+        rightMargin=42,
+        leftMargin=42,
+        topMargin=42,
+        bottomMargin=42,
+    )
+    styles = getSampleStyleSheet()
+    story = []
+    for block in resume_text.split("\n\n"):
+        safe_block = block.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        story.append(Paragraph(safe_block.replace("\n", "<br/>"), styles["BodyText"]))
+        story.append(Spacer(1, 10))
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def build_networking_messages(job):
     return {
         "Alumni": f"Hi [Name], I found your profile while researching {job['company']} and noticed our shared academic background. I am exploring the {job['title']} role and would value any perspective you might be willing to share about the company or team.",
@@ -523,15 +1008,176 @@ def render_metric_row(jobs):
     chicago_remote = sum(
         "Chicago" in job["location"] or "Remote" in job["location"] for job in jobs
     )
+    tracker = st.session_state.application_tracker
+    outreach_tracker = st.session_state.outreach_tracker
+    today = date.today()
+    followups_due = sum(
+        1
+        for item in tracker.values()
+        if item.get("follow_up_date") and item["follow_up_date"] <= today
+    ) + sum(
+        1
+        for item in outreach_tracker
+        if item.get("follow_up_date") and item["follow_up_date"] <= today
+    )
+    recruiters_waiting = sum(
+        1 for item in tracker.values() if item.get("status") == "Recruiter waiting"
+    ) + sum(
+        1
+        for item in outreach_tracker
+        if item.get("status") in {"Messaged", "Waiting for reply"}
+    )
+    interviews = sum(1 for item in tracker.values() if item.get("status") == "Interview")
+    in_progress = sum(
+        1
+        for item in tracker.values()
+        if item.get("status") in {"Interested", "Applied", "Recruiter waiting", "Interview"}
+    )
 
     cols = st.columns(7)
     cols[0].metric("New Jobs", new_jobs)
     cols[1].metric("High Match", high_match)
     cols[2].metric("Chicago/Remote", chicago_remote)
-    cols[3].metric("Follow-Ups Due", "0")
-    cols[4].metric("Recruiters Waiting", "0")
-    cols[5].metric("Interviews", "0")
-    cols[6].metric("In Progress", "0")
+    cols[3].metric("Follow-Ups Due", followups_due)
+    cols[4].metric("Recruiters Waiting", recruiters_waiting)
+    cols[5].metric("Interviews", interviews)
+    cols[6].metric("In Progress", in_progress)
+
+
+def render_application_tracker(job):
+    tracker_key = str(job["id"])
+    current = st.session_state.application_tracker.setdefault(
+        tracker_key,
+        {
+            "status": "Interested",
+            "applied_date": None,
+            "follow_up_date": None,
+            "notes": "",
+        },
+    )
+    with st.expander("Track Application"):
+        status_options = [
+            "Interested",
+            "Applied",
+            "Recruiter waiting",
+            "Interview",
+            "Offer",
+            "Rejected",
+            "Archived",
+        ]
+        status = st.selectbox(
+            "Status",
+            status_options,
+            index=status_options.index(current.get("status", "Interested")),
+            key=f"status_{job['id']}",
+        )
+        col_1, col_2 = st.columns(2)
+        with col_1:
+            applied_date = st.date_input(
+                "Applied date",
+                value=current.get("applied_date") or date.today(),
+                key=f"applied_date_{job['id']}",
+            )
+        with col_2:
+            follow_up_date = st.date_input(
+                "Follow-up date",
+                value=current.get("follow_up_date") or date.today(),
+                key=f"follow_up_date_{job['id']}",
+            )
+        notes = st.text_area(
+            "Tracking notes",
+            value=current.get("notes", ""),
+            key=f"tracking_notes_{job['id']}",
+            height=100,
+        )
+        if st.button("Save Tracking", key=f"save_tracking_{job['id']}"):
+            application_row = {
+                "saved_at": date.today(),
+                "company": job["company"],
+                "role": job["title"],
+                "status": status,
+                "applied_date": applied_date,
+                "follow_up_date": follow_up_date,
+                "fit_score": job["fit_score"],
+                "link": job["link"],
+                "notes": notes,
+            }
+            st.session_state.application_tracker[tracker_key] = application_row
+            csv_file = append_csv_row("applications.csv", APPLICATION_COLUMNS, application_row)
+            saved, message = append_sheet_row(
+                "applications",
+                APPLICATION_COLUMNS,
+                application_row,
+            )
+            st.success(f"Saved tracking for {job['company']} - {job['title']}.")
+            st.info(f"Saved to iCloud CSV: {csv_file}")
+            if saved:
+                st.info(message)
+
+
+def render_networking_tracker():
+    st.subheader("Networking Tracker")
+    st.write(
+        "Track LinkedIn messages, alumni outreach, referrals, recruiters, hiring managers, "
+        "and follow-up dates."
+    )
+    with st.form("networking_tracker_form", clear_on_submit=True):
+        col_1, col_2 = st.columns(2)
+        with col_1:
+            contact_name = st.text_input("Contact name")
+            company = st.text_input("Company", value="Morningstar")
+            contact_role = st.text_input("Contact role", value="SVP")
+        with col_2:
+            relationship = st.selectbox(
+                "Relationship",
+                ["First-degree LinkedIn", "Second-degree LinkedIn", "Alumni", "Recruiter", "Hiring manager", "Other"],
+            )
+            status = st.selectbox(
+                "Outreach status",
+                ["Messaged", "Waiting for reply", "Replied", "Followed up", "Call scheduled", "No response", "Closed"],
+            )
+            message_date = st.date_input("Message date", value=date.today())
+
+        follow_up_date = st.date_input("Follow-up date", value=date.today())
+        related_job = st.text_input(
+            "Related job",
+            value="Head of Equity Research, Multi Asset Research",
+        )
+        notes = st.text_area(
+            "Notes",
+            value="Sent LinkedIn message after applying. First-degree connection; may not remember me.",
+            height=100,
+        )
+        submitted = st.form_submit_button("Save Outreach")
+
+    if submitted:
+        outreach_row = {
+            "saved_at": date.today(),
+            "contact_name": contact_name or "Unnamed contact",
+            "company": company or "Company TBD",
+            "contact_role": contact_role,
+            "relationship": relationship,
+            "status": status,
+            "message_date": message_date,
+            "follow_up_date": follow_up_date,
+            "related_job": related_job,
+            "notes": notes,
+        }
+        st.session_state.outreach_tracker.append(outreach_row)
+        csv_file = append_csv_row("outreach.csv", OUTREACH_COLUMNS, outreach_row)
+        saved, message = append_sheet_row(
+            "outreach",
+            OUTREACH_COLUMNS,
+            outreach_row,
+        )
+        st.success(f"Saved outreach to {contact_name or 'contact'} at {company or 'company'}.")
+        st.info(f"Saved to iCloud CSV: {csv_file}")
+        if saved:
+            st.info(message)
+
+    if st.session_state.outreach_tracker:
+        st.write("**Saved Outreach**")
+        st.dataframe(pd.DataFrame(st.session_state.outreach_tracker), use_container_width=True)
 
 
 def render_job_card(job):
@@ -547,6 +1193,21 @@ def render_job_card(job):
 
         st.write(f"**Why this is worth considering:** {job['why']}")
 
+        render_application_tracker(job)
+
+        with st.expander("Job Details and Score Notes"):
+            st.write(f"**Link:** {job['link']}")
+            st.write(f"**Tier assigned:** {job['tier']}")
+            st.write(f"**Salary read by dashboard:** {job['salary']}")
+            if job.get("source_notes"):
+                st.write("**Source notes entered**")
+                st.write(job["source_notes"])
+            else:
+                st.write(
+                    "No job description was entered. If you only paste a link, the dashboard "
+                    "can infer the company/title from some URLs, but it cannot evaluate the full job detail yet."
+                )
+
         strengths_col, gaps_col = st.columns(2)
         with strengths_col:
             st.write("**Strength Signals**")
@@ -559,6 +1220,29 @@ def render_job_card(job):
 
         with st.expander("Generate Application"):
             bullets, cover_letter, linkedin_message = build_application_package(job)
+            st.write("**Tailored Resume PDF**")
+            uploaded_resume = st.file_uploader(
+                "Upload your current resume PDF",
+                type=["pdf"],
+                key=f"resume_upload_{job['id']}",
+            )
+            if uploaded_resume is not None:
+                resume_text = extract_resume_text(uploaded_resume)
+                tailored_resume_text = build_tailored_resume_from_upload(job, resume_text)
+                resume_pdf = create_resume_pdf(tailored_resume_text)
+                st.download_button(
+                    "Download Tailored Resume PDF",
+                    data=resume_pdf,
+                    file_name=f"Selina_Han_Tailored_Resume_{job['company'].replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    key=f"resume_download_{job['id']}",
+                )
+                st.caption(
+                    "This creates an editable starting point in PDF form. Review dates, titles, "
+                    "metrics, and exact wording before submitting."
+                )
+            else:
+                st.info("Upload your current resume PDF to generate a tailored resume PDF for this job.")
 
             st.write("**Tailored Resume Bullets**")
             for bullet in bullets:
@@ -636,21 +1320,55 @@ def render_job_intake(existing_jobs):
             height=160,
             placeholder="Paste the job description, recruiter note, or your quick thoughts here.",
         )
+        fetch_from_link = st.checkbox(
+            "Fetch job details from link",
+            value=True,
+            help="Works best for company career pages. LinkedIn and Indeed may block automatic reading.",
+        )
         submitted = st.form_submit_button("Add and Score Job")
 
     if submitted:
         next_id = max(job["id"] for job in existing_jobs + st.session_state.custom_jobs) + 1
+        fetch_status = ""
+        fetched_text = ""
+        fetched_details = {}
+        if fetch_from_link and link:
+            fetched_text, fetch_status = fetch_job_page(link)
+            if fetched_text:
+                fetched_details = extract_job_details_from_page(link, fetched_text)
+
+        resolved_title = title or fetched_details.get("title", "")
+        resolved_company = company or fetched_details.get("company", "")
+        resolved_location = location or fetched_details.get("location", "")
+        resolved_salary = salary or fetched_details.get("salary", "")
+        fetched_requirements = fetched_details.get("requirements", "")
+        combined_description = "\n\n".join(
+            part
+            for part in [
+                f"Source: {source}",
+                f"Fetch status: {fetch_status}" if fetch_status else "",
+                job_description,
+                "Fetched requirements/text:",
+                fetched_requirements,
+            ]
+            if part
+        )
+
         new_job = build_custom_job(
             next_id=next_id,
-            title=title,
-            company=company,
-            location=location,
-            salary=salary,
+            title=resolved_title,
+            company=resolved_company,
+            location=resolved_location,
+            salary=resolved_salary,
             link=link,
-            job_description=f"{source}. {job_description}",
+            job_description=combined_description,
         )
         st.session_state.custom_jobs.append(new_job)
+        csv_file = append_csv_row("jobs.csv", JOB_COLUMNS, serialize_job(new_job))
         st.success(f"Added {new_job['company']} - {new_job['title']} with a fit score of {new_job['fit_score']}/100.")
+        st.info(f"Saved to iCloud CSV: {csv_file}")
+        if fetch_status:
+            st.info(fetch_status)
 
 
 def render_phase_one_sources():
@@ -686,8 +1404,45 @@ def render_phase_one_sources():
             st.link_button(company, url)
 
 
+def render_google_sheets_status():
+    st.subheader("Google Sheets Storage")
+    if google_sheets_configured():
+        st.success("Google Sheets is configured. Applications and outreach will save to the sheet.")
+        try:
+            sheet = get_google_sheet()
+            get_or_create_worksheet(sheet, "applications", APPLICATION_COLUMNS)
+            get_or_create_worksheet(sheet, "outreach", OUTREACH_COLUMNS)
+            st.caption("Tabs ready: applications, outreach")
+        except Exception as exc:
+            st.warning(f"Google Sheets configuration was found, but connection failed: {exc}")
+    else:
+        st.info(
+            "Google Sheets is not configured yet. Add your service account credentials and "
+            "Google Sheet ID to Streamlit secrets to save across devices."
+        )
+
+
+def render_icloud_storage_status():
+    st.subheader("iCloud CSV Storage")
+    folder = ensure_icloud_storage()
+    st.success("Local iCloud storage is active.")
+    st.caption(str(folder))
+    for filename in ["jobs.csv", "applications.csv", "outreach.csv"]:
+        path = csv_path(filename)
+        if path.exists():
+            st.write(f"{filename}: saved")
+        else:
+            st.write(f"{filename}: will be created when first saved")
+
+
 if "custom_jobs" not in st.session_state:
-    st.session_state.custom_jobs = []
+    st.session_state.custom_jobs = [
+        deserialize_job(row) for row in load_csv_records("jobs.csv", JOB_COLUMNS)
+    ]
+if "application_tracker" not in st.session_state:
+    st.session_state.application_tracker = {}
+if "outreach_tracker" not in st.session_state:
+    st.session_state.outreach_tracker = load_csv_records("outreach.csv", OUTREACH_COLUMNS)
 
 
 st.title("Selina Opportunity Dashboard")
@@ -711,6 +1466,45 @@ st.divider()
 render_phase_one_sources()
 
 st.divider()
+
+render_icloud_storage_status()
+
+st.divider()
+
+render_google_sheets_status()
+
+st.divider()
+
+render_networking_tracker()
+
+st.divider()
+
+saved_application_rows = load_csv_records("applications.csv", APPLICATION_COLUMNS)
+
+if st.session_state.application_tracker or saved_application_rows:
+    st.subheader("Application Tracker")
+    tracker_rows = []
+    job_lookup = {str(job["id"]): job for job in all_jobs}
+    for job_id, tracking in st.session_state.application_tracker.items():
+        job = job_lookup.get(job_id)
+        if not job:
+            continue
+        tracker_rows.append(
+            {
+                "Company": job["company"],
+                "Role": job["title"],
+                "Status": tracking.get("status", ""),
+                "Applied Date": tracking.get("applied_date"),
+                "Follow-Up Date": tracking.get("follow_up_date"),
+                "Notes": tracking.get("notes", ""),
+            }
+        )
+    if tracker_rows:
+        st.dataframe(pd.DataFrame(tracker_rows), use_container_width=True)
+    if saved_application_rows:
+        st.write("**Saved in iCloud CSV**")
+        st.dataframe(pd.DataFrame(saved_application_rows), use_container_width=True)
+    st.divider()
 
 with st.sidebar:
     st.header("Target Profile")
@@ -754,6 +1548,18 @@ score_df = pd.DataFrame(
         for job in filtered_jobs
     ]
 )
+
+if st.session_state.custom_jobs:
+    st.subheader("Jobs You Added")
+    st.caption("These stay visible even when they are below the minimum score filter.")
+    for job in sorted(
+        st.session_state.custom_jobs,
+        key=lambda item: item["fit_score"],
+        reverse=True,
+    ):
+        render_job_card(job)
+
+    st.divider()
 
 if not filtered_jobs:
     st.warning("No roles match the current filters.")

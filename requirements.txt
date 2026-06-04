@@ -1,2 +1,8 @@
 streamlit
 pandas
+requests
+beautifulsoup4
+pypdf
+reportlab
+gspread
+google-auth
