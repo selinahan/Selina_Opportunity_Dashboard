@@ -167,8 +167,12 @@ JOB_COLUMNS = [
 
 
 def ensure_icloud_storage():
-    ICLOUD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    return ICLOUD_STORAGE_DIR
+    try:
+        ICLOUD_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        return ICLOUD_STORAGE_DIR
+    except OSError:
+        LOCAL_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        return LOCAL_STORAGE_DIR
 
 
 def csv_path(filename):
@@ -1443,7 +1447,10 @@ def render_google_sheets_status():
 def render_icloud_storage_status():
     st.subheader("iCloud CSV Storage")
     folder = ensure_icloud_storage()
-    st.success("Local iCloud storage is active.")
+    if folder == ICLOUD_STORAGE_DIR:
+        st.success("Local iCloud storage is active.")
+    else:
+        st.info("iCloud is not available in this environment, so CSV files are using local app storage.")
     st.caption(str(folder))
     for filename in ["jobs.csv", "applications.csv", "outreach.csv"]:
         path = csv_path(filename)
