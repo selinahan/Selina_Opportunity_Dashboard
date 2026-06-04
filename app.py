@@ -5,11 +5,9 @@ import re
 from urllib.parse import quote_plus, unquote, urlparse
 
 import pandas as pd
-import gspread
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
-from google.oauth2.service_account import Credentials
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet
@@ -256,64 +254,15 @@ def deserialize_job(row):
     }
 
 
-def google_sheets_configured():
-    try:
-        return "gcp_service_account" in st.secrets and "google_sheet_id" in st.secrets
-    except Exception:
-        return False
-
-
-@st.cache_resource
-def get_google_sheet():
-    if not google_sheets_configured():
+def parse_date_value(value):
+    if isinstance(value, date):
+        return value
+    if not value:
         return None
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    credentials = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]),
-        scopes=scopes,
-    )
-    client = gspread.authorize(credentials)
-    return client.open_by_key(st.secrets["google_sheet_id"])
-
-
-def get_or_create_worksheet(sheet, title, columns):
     try:
-        worksheet = sheet.worksheet(title)
-    except gspread.WorksheetNotFound:
-        worksheet = sheet.add_worksheet(title=title, rows=500, cols=len(columns))
-        worksheet.append_row(columns)
-        return worksheet
-
-    existing_values = worksheet.get_all_values()
-    if not existing_values:
-        worksheet.append_row(columns)
-    return worksheet
-
-
-def append_sheet_row(tab_name, columns, row):
-    sheet = get_google_sheet()
-    if sheet is None:
-        return False, "Google Sheets is not configured yet."
-    try:
-        worksheet = get_or_create_worksheet(sheet, tab_name, columns)
-        worksheet.append_row([str(row.get(column, "")) for column in columns])
-        return True, f"Saved to Google Sheet tab: {tab_name}."
-    except Exception as exc:
-        return False, f"Could not save to Google Sheets: {exc}"
-
-
-def load_sheet_records(tab_name, columns):
-    sheet = get_google_sheet()
-    if sheet is None:
-        return []
-    try:
-        worksheet = get_or_create_worksheet(sheet, tab_name, columns)
-        return worksheet.get_all_records()
+        return pd.to_datetime(value).date()
     except Exception:
-        return []
+        return None
 
 
 def extract_salary_numbers(text):
@@ -1036,11 +985,13 @@ def render_metric_row(jobs):
     followups_due = sum(
         1
         for item in tracker.values()
-        if item.get("follow_up_date") and item["follow_up_date"] <= today
+        if parse_date_value(item.get("follow_up_date"))
+        and parse_date_value(item.get("follow_up_date")) <= today
     ) + sum(
         1
         for item in outreach_tracker
-        if item.get("follow_up_date") and item["follow_up_date"] <= today
+        if parse_date_value(item.get("follow_up_date"))
+        and parse_date_value(item.get("follow_up_date")) <= today
     )
     recruiters_waiting = sum(
         1 for item in tracker.values() if item.get("status") == "Recruiter waiting"
@@ -1126,15 +1077,8 @@ def render_application_tracker(job):
             }
             st.session_state.application_tracker[tracker_key] = application_row
             csv_file = append_csv_row("applications.csv", APPLICATION_COLUMNS, application_row)
-            saved, message = append_sheet_row(
-                "applications",
-                APPLICATION_COLUMNS,
-                application_row,
-            )
             st.success(f"Saved tracking for {job['company']} - {job['title']}.")
             st.info(f"Saved to iCloud CSV: {csv_file}")
-            if saved:
-                st.info(message)
 
 
 def render_networking_tracker():
@@ -1187,15 +1131,8 @@ def render_networking_tracker():
         }
         st.session_state.outreach_tracker.append(outreach_row)
         csv_file = append_csv_row("outreach.csv", OUTREACH_COLUMNS, outreach_row)
-        saved, message = append_sheet_row(
-            "outreach",
-            OUTREACH_COLUMNS,
-            outreach_row,
-        )
         st.success(f"Saved outreach to {contact_name or 'contact'} at {company or 'company'}.")
         st.info(f"Saved to iCloud CSV: {csv_file}")
-        if saved:
-            st.info(message)
 
     if st.session_state.outreach_tracker:
         st.write("**Saved Outreach**")
@@ -1426,24 +1363,6 @@ def render_phase_one_sources():
             st.link_button(company, url)
 
 
-def render_google_sheets_status():
-    st.subheader("Google Sheets Storage")
-    if google_sheets_configured():
-        st.success("Google Sheets is configured. Applications and outreach will save to the sheet.")
-        try:
-            sheet = get_google_sheet()
-            get_or_create_worksheet(sheet, "applications", APPLICATION_COLUMNS)
-            get_or_create_worksheet(sheet, "outreach", OUTREACH_COLUMNS)
-            st.caption("Tabs ready: applications, outreach")
-        except Exception as exc:
-            st.warning(f"Google Sheets configuration was found, but connection failed: {exc}")
-    else:
-        st.info(
-            "Google Sheets is not configured yet. Add your service account credentials and "
-            "Google Sheet ID to Streamlit secrets to save across devices."
-        )
-
-
 def render_icloud_storage_status():
     st.subheader("iCloud CSV Storage")
     folder = ensure_icloud_storage()
@@ -1460,6 +1379,77 @@ def render_icloud_storage_status():
             st.write(f"{filename}: saved locally because iCloud was not writable")
         else:
             st.write(f"{filename}: will be created when first saved")
+
+
+def render_saved_tracker_dashboard():
+    saved_jobs = load_csv_records("jobs.csv", JOB_COLUMNS)
+    saved_applications = load_csv_records("applications.csv", APPLICATION_COLUMNS)
+    saved_outreach = load_csv_records("outreach.csv", OUTREACH_COLUMNS)
+
+    st.subheader("Saved Tracker Dashboard")
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("Saved Jobs", len(saved_jobs))
+    metric_cols[1].metric("Applications", len(saved_applications))
+    metric_cols[2].metric("Outreach", len(saved_outreach))
+    metric_cols[3].metric(
+        "Applied",
+        sum(1 for row in saved_applications if row.get("status") == "Applied"),
+    )
+    metric_cols[4].metric(
+        "Waiting Replies",
+        sum(
+            1
+            for row in saved_outreach
+            if row.get("status") in {"Messaged", "Waiting for reply"}
+        ),
+    )
+    metric_cols[5].metric(
+        "Interviews",
+        sum(1 for row in saved_applications if row.get("status") == "Interview"),
+    )
+
+    tab_jobs, tab_apps, tab_outreach = st.tabs(["Jobs", "Applications", "Outreach"])
+    with tab_jobs:
+        if saved_jobs:
+            st.dataframe(pd.DataFrame(saved_jobs), use_container_width=True)
+            st.download_button(
+                "Download jobs.csv",
+                data=pd.DataFrame(saved_jobs).to_csv(index=False),
+                file_name="jobs.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("No saved jobs yet.")
+
+    with tab_apps:
+        if saved_applications:
+            app_df = pd.DataFrame(saved_applications)
+            st.dataframe(app_df, use_container_width=True)
+            if "status" in app_df.columns:
+                st.bar_chart(app_df["status"].value_counts())
+            st.download_button(
+                "Download applications.csv",
+                data=app_df.to_csv(index=False),
+                file_name="applications.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("No saved applications yet.")
+
+    with tab_outreach:
+        if saved_outreach:
+            outreach_df = pd.DataFrame(saved_outreach)
+            st.dataframe(outreach_df, use_container_width=True)
+            if "status" in outreach_df.columns:
+                st.bar_chart(outreach_df["status"].value_counts())
+            st.download_button(
+                "Download outreach.csv",
+                data=outreach_df.to_csv(index=False),
+                file_name="outreach.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("No saved outreach yet.")
 
 
 if "custom_jobs" not in st.session_state:
@@ -1498,7 +1488,7 @@ render_icloud_storage_status()
 
 st.divider()
 
-render_google_sheets_status()
+render_saved_tracker_dashboard()
 
 st.divider()
 
