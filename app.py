@@ -20,6 +20,7 @@ SALARY_FLOOR = 200_000
 ICLOUD_STORAGE_DIR = Path(
     "/Users/Selina/Library/Mobile Documents/com~apple~CloudDocs/Selina Opportunity Dashboard"
 )
+LOCAL_STORAGE_DIR = Path("data")
 
 
 st.set_page_config(
@@ -174,10 +175,17 @@ def csv_path(filename):
     return ensure_icloud_storage() / filename
 
 
+def fallback_csv_path(filename):
+    LOCAL_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return LOCAL_STORAGE_DIR / filename
+
+
 def load_csv_records(filename, columns):
     path = csv_path(filename)
     if not path.exists():
-        return []
+        path = fallback_csv_path(filename)
+        if not path.exists():
+            return []
     try:
         return pd.read_csv(path).fillna("").to_dict("records")
     except Exception:
@@ -188,8 +196,18 @@ def append_csv_row(filename, columns, row):
     path = csv_path(filename)
     safe_row = {column: str(row.get(column, "")) for column in columns}
     frame = pd.DataFrame([safe_row], columns=columns)
-    frame.to_csv(path, mode="a", index=False, header=not path.exists())
-    return path
+    try:
+        frame.to_csv(path, mode="a", index=False, header=not path.exists())
+        return path
+    except PermissionError:
+        fallback_path = fallback_csv_path(filename)
+        frame.to_csv(
+            fallback_path,
+            mode="a",
+            index=False,
+            header=not fallback_path.exists(),
+        )
+        return fallback_path
 
 
 def split_cell(value):
@@ -1431,6 +1449,8 @@ def render_icloud_storage_status():
         path = csv_path(filename)
         if path.exists():
             st.write(f"{filename}: saved")
+        elif fallback_csv_path(filename).exists():
+            st.write(f"{filename}: saved locally because iCloud was not writable")
         else:
             st.write(f"{filename}: will be created when first saved")
 
